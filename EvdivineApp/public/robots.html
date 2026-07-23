@@ -1,0 +1,378 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex, nofollow" />
+    <title>Evdivine Robots Rules</title>
+    <style>
+      :root {
+        --bg: #07111f;
+        --bg2: #0f172a;
+        --card: rgba(255, 255, 255, 0.08);
+        --card-border: rgba(255, 255, 255, 0.12);
+        --text: #f8fafc;
+        --muted: rgba(248, 250, 252, 0.72);
+        --accent: #f59e0b;
+        --accent2: #fb7185;
+        --success: #34d399;
+        --shadow: 0 24px 70px rgba(0, 0, 0, 0.38);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        margin: 0;
+        min-height: 100%;
+        background:
+          radial-gradient(circle at top left, rgba(245, 158, 11, 0.18), transparent 28%),
+          radial-gradient(circle at top right, rgba(251, 113, 133, 0.15), transparent 28%),
+          linear-gradient(180deg, #050816 0%, var(--bg) 45%, var(--bg2) 100%);
+        color: var(--text);
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+
+      a {
+        color: inherit;
+      }
+
+      .page {
+        width: min(1160px, calc(100% - 28px));
+        margin: 0 auto;
+        padding: 28px 0 40px;
+      }
+
+      .hero {
+        border: 1px solid var(--card-border);
+        border-radius: 28px;
+        background: linear-gradient(135deg, rgba(255, 255, 255, 0.12), rgba(255, 255, 255, 0.06));
+        box-shadow: var(--shadow);
+        padding: 30px;
+        overflow: hidden;
+        position: relative;
+      }
+
+      .hero::after {
+        content: "";
+        position: absolute;
+        width: 300px;
+        height: 300px;
+        right: -120px;
+        bottom: -120px;
+        border-radius: 50%;
+        background: radial-gradient(circle, rgba(245, 158, 11, 0.18), transparent 70%);
+        pointer-events: none;
+      }
+
+      .eyebrow {
+        display: inline-flex;
+        gap: 10px;
+        align-items: center;
+        text-transform: uppercase;
+        letter-spacing: 0.18em;
+        font-size: 12px;
+        font-weight: 800;
+        color: var(--accent);
+      }
+
+      .eyebrow::before {
+        content: "";
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: linear-gradient(135deg, var(--accent), var(--accent2));
+        box-shadow: 0 0 0 6px rgba(245, 158, 11, 0.12);
+      }
+
+      h1 {
+        margin: 14px 0 0;
+        font-size: clamp(2rem, 4vw, 4rem);
+        line-height: 1.02;
+        letter-spacing: -0.04em;
+      }
+
+      .subtitle {
+        margin: 14px 0 0;
+        max-width: 820px;
+        color: var(--muted);
+        font-size: clamp(0.98rem, 1.8vw, 1.08rem);
+        line-height: 1.75;
+      }
+
+      .info-row {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 14px;
+        margin-top: 24px;
+      }
+
+      .info-card {
+        background: var(--card);
+        border: 1px solid var(--card-border);
+        border-radius: 20px;
+        padding: 16px;
+        backdrop-filter: blur(14px);
+      }
+
+      .info-label {
+        display: block;
+        color: var(--muted);
+        font-size: 12px;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        margin-bottom: 8px;
+      }
+
+      .info-value {
+        display: block;
+        font-size: 18px;
+        font-weight: 800;
+        line-height: 1.4;
+      }
+
+      .section {
+        margin-top: 26px;
+      }
+
+      .section-head {
+        display: flex;
+        justify-content: space-between;
+        align-items: end;
+        gap: 14px;
+        margin-bottom: 14px;
+      }
+
+      .section-head h2 {
+        margin: 0;
+        font-size: 1.15rem;
+        letter-spacing: -0.02em;
+      }
+
+      .section-head p {
+        margin: 4px 0 0;
+        color: var(--muted);
+        font-size: 0.95rem;
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: 1.1fr 0.9fr;
+        gap: 16px;
+      }
+
+      .panel {
+        border: 1px solid var(--card-border);
+        border-radius: 24px;
+        background: rgba(15, 23, 42, 0.76);
+        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.22);
+        padding: 18px;
+        backdrop-filter: blur(12px);
+      }
+
+      .rule-list {
+        list-style: none;
+        padding: 0;
+        margin: 0;
+        display: grid;
+        gap: 12px;
+      }
+
+      .rule {
+        display: flex;
+        gap: 12px;
+        align-items: flex-start;
+        padding: 14px;
+        border-radius: 18px;
+        background: rgba(255, 255, 255, 0.04);
+        border: 1px solid rgba(255, 255, 255, 0.07);
+      }
+
+      .dot {
+        width: 12px;
+        height: 12px;
+        border-radius: 50%;
+        margin-top: 5px;
+        background: linear-gradient(135deg, var(--accent), var(--success));
+        flex: 0 0 auto;
+      }
+
+      .rule strong,
+      .rule code {
+        color: #fff;
+      }
+
+      .rule p {
+        margin: 4px 0 0;
+        color: var(--muted);
+        line-height: 1.6;
+        font-size: 14px;
+      }
+
+      .sitemap-box {
+        display: grid;
+        gap: 10px;
+      }
+
+      .sitemap-link {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 10px;
+        padding: 14px 16px;
+        border-radius: 18px;
+        text-decoration: none;
+        background: rgba(255, 255, 255, 0.04);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        transition: transform 0.18s ease, border-color 0.18s ease;
+      }
+
+      .sitemap-link:hover {
+        transform: translateY(-2px);
+        border-color: rgba(245, 158, 11, 0.4);
+      }
+
+      .sitemap-link span {
+        font-weight: 700;
+      }
+
+      .chip {
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: #fcd34d;
+        background: rgba(245, 158, 11, 0.14);
+        border: 1px solid rgba(245, 158, 11, 0.2);
+        border-radius: 999px;
+        padding: 7px 10px;
+        flex: 0 0 auto;
+      }
+
+      .footer {
+        margin-top: 22px;
+        padding-top: 16px;
+        border-top: 1px solid rgba(255, 255, 255, 0.1);
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 1.7;
+      }
+
+      @media (max-width: 900px) {
+        .info-row,
+        .grid {
+          grid-template-columns: 1fr;
+        }
+      }
+
+      @media (max-width: 640px) {
+        .page {
+          width: min(100% - 18px, 100%);
+          padding: 18px 0 28px;
+        }
+
+        .hero {
+          padding: 20px;
+          border-radius: 22px;
+        }
+
+        .info-row {
+          grid-template-columns: 1fr;
+        }
+
+        .section-head {
+          flex-direction: column;
+          align-items: start;
+        }
+
+        .sitemap-link {
+          flex-direction: column;
+          align-items: flex-start;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="page">
+      <section class="hero">
+        <div class="eyebrow">Robots Rules</div>
+        <h1>Human-friendly view of the crawl policy.</h1>
+        <p class="subtitle">
+          This page is only for people opening the rules in a browser. Search engines should continue reading
+          <code>robots.txt</code> directly.
+        </p>
+
+        <div class="info-row">
+          <div class="info-card">
+            <span class="info-label">Status</span>
+            <span class="info-value">Crawler-safe</span>
+          </div>
+          <div class="info-card">
+            <span class="info-label">Format</span>
+            <span class="info-value">Plain text for bots</span>
+          </div>
+          <div class="info-card">
+            <span class="info-label">Companion</span>
+            <span class="info-value">Responsive HTML view</span>
+          </div>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="section-head">
+          <div>
+            <h2>Current rules</h2>
+            <p>The actual `robots.txt` file should stay minimal and direct.</p>
+          </div>
+        </div>
+
+        <div class="grid">
+          <div class="panel">
+            <ul class="rule-list">
+              <li class="rule">
+                <span class="dot"></span>
+                <div>
+                  <strong>User-agent: *</strong>
+                  <p>Applies the policy to all crawlers.</p>
+                </div>
+              </li>
+              <li class="rule">
+                <span class="dot"></span>
+                <div>
+                  <strong>Allow: /</strong>
+                  <p>Lets public pages be crawled normally.</p>
+                </div>
+              </li>
+              <li class="rule">
+                <span class="dot"></span>
+                <div>
+                  <strong>Sitemap: <code>/sitemap.xml</code></strong>
+                  <p>Points crawlers to the sitemap for discovery.</p>
+                </div>
+              </li>
+            </ul>
+          </div>
+
+          <div class="panel">
+            <div class="sitemap-box">
+              <a class="sitemap-link" href="/robots.txt">
+                <span>Open robots.txt</span>
+                <span class="chip">Crawler file</span>
+              </a>
+              <a class="sitemap-link" href="/sitemap.xml">
+                <span>Open sitemap.xml</span>
+                <span class="chip">Styled XML</span>
+              </a>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <div class="footer">
+        Note: if you open <code>robots.txt</code> directly, the browser will still show plain text because that is the
+        correct format for search engines. The visual styling belongs on this companion page.
+      </div>
+    </main>
+  </body>
+</html>

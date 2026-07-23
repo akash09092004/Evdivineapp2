@@ -1,0 +1,37 @@
+# Dependencies
+node_modules/
+**/node_modules/
+
+# Environment
+.env
+.env.*
+**/.env
+**/.env.*
+
+# Expo
+.expo/
+**/.expo/
+
+# Build
+dist/
+build/
+web-build/
+
+# Uploads
+uploads/
+**/uploads/
+
+# Logs
+*.log
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Android Keys
+*.jks
+*.keystore

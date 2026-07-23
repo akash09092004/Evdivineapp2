@@ -1,0 +1,29 @@
+{
+  "expo": {
+    "scheme": "evdivineapp",
+    "plugins": [
+      [
+        "@react-native-voice/voice",
+        {
+          "microphonePermission": "Allow Evdivine to access the microphone for voice chat.",
+          "speechRecognitionPermission": "Allow Evdivine to recognize your speech for chat messages."
+        }
+      ],
+      "expo-web-browser"
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "02ea3169-a38d-464e-94d2-07a76d2e7473"
+      }
+    },
+    "android": {
+      "package": "com.akashgupta123.evdivineapp"
+    },
+    "ios": {
+      "bundleIdentifier": "com.akashgupta123.evdivineapp",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
+    }
+  }
+}

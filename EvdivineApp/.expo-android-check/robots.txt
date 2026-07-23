@@ -1,0 +1,18 @@
+User-agent: *
+Allow: /
+
+# Public sitemap for search engines
+Sitemap: https://evdivine.com/sitemap.xml
+
+# Human-friendly companion page
+# Open /robots.html in a browser for a responsive visual view of these rules.
+
+# Keep private/auth areas out of crawl
+Disallow: /admin
+Disallow: /admin/
+Disallow: /login
+Disallow: /signup
+Disallow: /forgot-password
+Disallow: /reset-password
+Disallow: /otp-verification
+Disallow: /logout
