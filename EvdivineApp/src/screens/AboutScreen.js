@@ -442,8 +442,14 @@ const s = StyleSheet.create({
     borderWidth: 1,
     borderColor: C.border,
     padding: 14,
+    alignItems: "center",
   },
-  bodyText: { fontSize: 12, color: C.textSec, lineHeight: 20 },
+  bodyText: {
+    fontSize: 12,
+    color: C.textSec,
+    lineHeight: 20,
+    textAlign: "center",
+  },
   keywordText: {
     marginTop: 10,
     fontSize: 10,
@@ -451,6 +457,7 @@ const s = StyleSheet.create({
     fontWeight: "700",
     textTransform: "uppercase",
     letterSpacing: 0.4,
+    textAlign: "center",
   },
   approachGrid: {
     flexDirection: "row",

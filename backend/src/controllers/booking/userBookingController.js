@@ -1,5 +1,6 @@
 const mongoose = require("mongoose");
 const Booking = require("../../models/booking/Booking");
+const Payment = require("../../models/common/Payment");
 const User = require("../../models/user/User");
 const SlotPlan = require("../../models/booking/SlotPlan");
 const SlotLock = require("../../models/booking/SlotLock");
@@ -280,6 +281,46 @@ const getMyBooking = asyncHandler(async (req, res) => {
   return sendResponse(res, { data: booking });
 });
 
+const getBookingPaymentStatus = asyncHandler(async (req, res) => {
+  const booking = await Booking.findOne({
+    _id: req.params.bookingId,
+    userId: req.auth.id,
+  })
+    .populate("slotPlanId")
+    .populate("adminId")
+    .lean();
+
+  if (!booking) {
+    throw new AppError("Booking not found", 404, "BOOKING_NOT_FOUND");
+  }
+
+  const payment = await Payment.findOne({
+    bookingId: booking._id,
+    user: req.auth.id,
+  })
+    .sort({ createdAt: -1 })
+    .lean();
+
+  const paymentStatus = String(
+    payment?.status || booking?.paymentStatus || ""
+  ).trim().toLowerCase();
+  const bookingStatus = String(booking?.bookingStatus || "").trim().toLowerCase();
+  const success = ["completed", "paid"].includes(paymentStatus);
+
+  return sendResponse(res, {
+    data: {
+      success,
+      bookingStatus,
+      paymentStatus,
+      booking,
+      payment: payment || null,
+      message: success
+        ? "Payment successful"
+        : "Payment is still pending or failed",
+    },
+  });
+});
+
 const joinChat = asyncHandler(async (req, res) => {
   const result = await joinUserChat({
     bookingId: req.params.bookingId,
@@ -362,6 +403,7 @@ module.exports = {
   capturePaypalOrder,
   listMyBookings,
   getMyBooking,
+  getBookingPaymentStatus,
   joinChat,
   getMessages,
   sendChatMessage,

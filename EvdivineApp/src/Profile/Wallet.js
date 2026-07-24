@@ -30,6 +30,7 @@ import { useAuth } from "../context/AuthContext";
 import {
   captureWalletPayPalOrder,
   getWalletBalance,
+  getWalletPaymentHistory,
   getWalletPlans,
   getWalletTransactions,
   createWalletPayPalOrder,
@@ -59,6 +60,87 @@ const normalizeTransactions = (payload) => {
   return Array.isArray(data) ? data : [];
 };
 
+const normalizePaymentHistory = (payload) => {
+  const data =
+    payload?.data?.data?.items ??
+    payload?.data?.items ??
+    payload?.data?.data ??
+    payload?.data ??
+    payload ??
+    [];
+  return Array.isArray(data) ? data : [];
+};
+
+const normalizeHistoryEntry = (item, source = "transaction") => {
+  const amount = Number(
+    item?.amount ?? item?.expectedAmount ?? item?.meta?.paymentAmount ?? 0
+  );
+  const purpose = String(item?.purpose || item?.type || "").toLowerCase();
+  const isCreditPurpose =
+    purpose.includes("wallet_recharge") ||
+    purpose.includes("refund") ||
+    purpose.includes("bonus") ||
+    purpose.includes("credit") ||
+    purpose.includes("recharge");
+  const isDebitPurpose =
+    purpose.includes("booking") ||
+    purpose.includes("chat") ||
+    purpose.includes("call") ||
+    purpose.includes("video") ||
+    purpose.includes("service") ||
+    purpose.includes("payment");
+  const direction =
+    item?.direction ||
+    (isCreditPurpose ? "credit" : isDebitPurpose ? "debit" : amount >= 0 ? "credit" : "debit");
+  const createdAt = item?.createdAt || item?.updatedAt || item?.paidAt || "";
+  const reference =
+    item?.reference ||
+    item?.orderId ||
+    item?.paymentId ||
+    item?._id ||
+    "";
+
+  return {
+    ...item,
+    amount,
+    direction,
+    reference,
+    createdAt,
+    status: String(item?.status || "completed").toLowerCase(),
+    type: item?.type || item?.purpose || source,
+    description:
+      item?.description ||
+      item?.meta?.description ||
+      item?.meta?.planName ||
+      item?.purpose ||
+      (direction === "credit" ? "Wallet credit" : "Wallet debit"),
+    source,
+  };
+};
+
+const mergeHistory = (transactions = [], paymentHistory = []) => {
+  const entries = [
+    ...paymentHistory.map((item) => normalizeHistoryEntry(item, "payment")),
+    ...transactions.map((item) => normalizeHistoryEntry(item, "wallet")),
+  ];
+  const deduped = new Map();
+
+  entries.forEach((item) => {
+    const key = [item.reference, item.type, item.createdAt, item.amount].join(
+      "|"
+    );
+    if (!deduped.has(key)) {
+      deduped.set(key, item);
+    }
+  });
+
+  return Array.from(deduped.values()).sort((a, b) => {
+    const aTime = new Date(a.createdAt || 0).getTime();
+    const bTime = new Date(b.createdAt || 0).getTime();
+    return bTime - aTime;
+  });
+};
+
 const Wallet = ({ navigation }) => {
   const { authReady, authToken, isAuthenticated } = useAuth();
   const { width } = useWindowDimensions();
@@ -86,20 +168,33 @@ const Wallet = ({ navigation }) => {
     if (!isAuthenticated || !authToken) {
       setLoading(false);
       setRefreshing(false);
-      return;
+      return { balance: 0, plans: [], transactions: [] };
     }
 
     try {
-      const [balanceResponse, plansResponse, txResponse] = await Promise.all([
-        getWalletBalance({ authToken }),
-        getWalletPlans({ authToken }),
-        getWalletTransactions({ authToken }),
-      ]);
+      const [balanceResponse, plansResponse, txResponse, paymentHistoryResponse] =
+        await Promise.allSettled([
+          getWalletBalance({ authToken }),
+          getWalletPlans({ authToken }),
+          getWalletTransactions({ authToken }),
+          getWalletPaymentHistory({ authToken, page: 1, limit: 100 }),
+        ]);
 
-      const nextBalance =
-        balanceResponse?.data?.data || balanceResponse?.data || {};
-      const nextPlans = plansResponse?.data?.data ?? plansResponse?.data ?? [];
-      const nextTransactions = normalizeTransactions(txResponse);
+      const balanceData =
+        balanceResponse.status === "fulfilled" ? balanceResponse.value : null;
+      const plansData =
+        plansResponse.status === "fulfilled" ? plansResponse.value : null;
+      const txData = txResponse.status === "fulfilled" ? txResponse.value : null;
+      const paymentHistoryData =
+        paymentHistoryResponse.status === "fulfilled"
+          ? paymentHistoryResponse.value
+          : null;
+
+      const nextBalance = balanceData?.data?.data || balanceData?.data || {};
+      const nextPlans = plansData?.data?.data ?? plansData?.data ?? [];
+      const nextTransactions = normalizeTransactions(txData);
+      const nextPaymentHistory = normalizePaymentHistory(paymentHistoryData);
+      const combinedHistory = mergeHistory(nextTransactions, nextPaymentHistory);
 
       setBalanceData({
         balance: Number(nextBalance.balance || 0),
@@ -109,7 +204,7 @@ const Wallet = ({ navigation }) => {
         isLowBalance: Boolean(nextBalance.isLowBalance),
       });
       setPlans(Array.isArray(nextPlans) ? nextPlans : []);
-      setTransactions(nextTransactions);
+      setTransactions(combinedHistory);
 
       const defaultPlan =
         (Array.isArray(nextPlans) &&
@@ -120,6 +215,12 @@ const Wallet = ({ navigation }) => {
         setSelectedPlanId(defaultPlan._id);
         setAmount(String(defaultPlan.amount || 500));
       }
+
+      return {
+        balance: Number(nextBalance.balance || 0),
+        plans: Array.isArray(nextPlans) ? nextPlans : [],
+        transactions: combinedHistory,
+      };
     } catch (error) {
       Alert.alert(
         "Wallet load failed",
@@ -127,6 +228,7 @@ const Wallet = ({ navigation }) => {
           error?.message ||
           "Wallet data load nahi ho paya."
       );
+      return null;
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -194,15 +296,35 @@ const Wallet = ({ navigation }) => {
     [activePlan?.name, selectedPlanId]
   );
 
-  const handleWalletRechargeSuccess = useCallback(async () => {
-    Alert.alert(
-      "Wallet recharged",
-      "PayPal payment successfully complete ho gaya."
-    );
-    setSelectedPlanId("");
-    setAmount("500");
-    await loadWalletData();
-  }, [loadWalletData]);
+  const handleWalletRechargeSuccess = useCallback(
+    async (response) => {
+      const payment =
+        response?.data?.data?.payment || response?.data?.payment || {};
+      const rechargeAmount =
+        Number(
+          response?.data?.data?.amount ??
+            payment?.amount ??
+            payment?.expectedAmount ??
+            rechargeAmountValue
+        ) || 0;
+
+      const refreshed = await loadWalletData();
+      const currentBalance = Number(
+        refreshed?.balance ?? balanceData.balance ?? 0
+      );
+
+      setSelectedPlanId("");
+      setAmount("500");
+
+      Alert.alert(
+        "Wallet recharged successfully",
+        `Your wallet has been credited with ${formatUSD(
+          rechargeAmount
+        )}. New balance: ${formatUSD(currentBalance)}.`
+      );
+    },
+    [balanceData.balance, loadWalletData, rechargeAmountValue]
+  );
 
   const handleWalletRechargeError = useCallback((error) => {
     Alert.alert(

@@ -77,6 +77,22 @@ export const getWalletPlans = async ({ authToken = "" }) =>
 export const getWalletTransactions = async ({ authToken = "" }) =>
   requestJson("/api/users/wallet/transactions", { authToken });
 
+export const getWalletPaymentHistory = async ({
+  authToken = "",
+  page = 1,
+  limit = 50,
+  purpose = "",
+  status = "",
+}) =>
+  requestJson(
+    `/api/users/payments/history?page=${encodeURIComponent(
+      page
+    )}&limit=${encodeURIComponent(limit)}&purpose=${encodeURIComponent(
+      purpose
+    )}&status=${encodeURIComponent(status)}`,
+    { authToken }
+  );
+
 export const createWalletRechargeOrder = async ({
   amount,
   planId = "",

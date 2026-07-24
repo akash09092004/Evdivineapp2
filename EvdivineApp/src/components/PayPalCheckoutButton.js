@@ -91,6 +91,19 @@ const getCaptureStatus = (response) =>
   response?.status ||
   "";
 
+const normalizeStatus = (value) =>
+  String(value || "")
+    .trim()
+    .toUpperCase();
+
+const isSuccessfulStatus = (value) =>
+  ["COMPLETED", "PAID", "SUCCESS", "SUCCEEDED"].includes(
+    normalizeStatus(value)
+  );
+
+const isPendingStatus = (value) =>
+  ["PENDING", "PROCESSING", "CREATED"].includes(normalizeStatus(value));
+
 const PayPalCheckoutButton = forwardRef(function PayPalCheckoutButton(
   {
     amount = 10,
@@ -191,9 +204,9 @@ const PayPalCheckoutButton = forwardRef(function PayPalCheckoutButton(
       ? await captureOrderRequest(captureArgs)
       : await capturePayPalOrder(captureArgs);
     const paymentStatus = getCaptureStatus(captureResponse);
-    const normalizedStatus = String(paymentStatus || "").toUpperCase();
+    const normalizedStatus = normalizeStatus(paymentStatus);
 
-    if (normalizedStatus === "PENDING" || normalizedStatus === "PROCESSING") {
+    if (isPendingStatus(normalizedStatus)) {
       notifyPaymentPending(
         captureResponse,
         `PayPal payment ${normalizedStatus.toLowerCase()} hai. Ye automatically complete ho sakta hai.`
@@ -201,7 +214,7 @@ const PayPalCheckoutButton = forwardRef(function PayPalCheckoutButton(
       return;
     }
 
-    if (normalizedStatus !== "COMPLETED") {
+    if (!isSuccessfulStatus(normalizedStatus)) {
       throw new Error(`PayPal capture status: ${paymentStatus || "unknown"}`);
     }
 
@@ -278,7 +291,9 @@ const PayPalCheckoutButton = forwardRef(function PayPalCheckoutButton(
       return false;
     }
 
-    if (status === "cancelled") {
+    const normalizedUrlStatus = normalizeStatus(status);
+
+    if (normalizedUrlStatus === "CANCELLED" || normalizedUrlStatus === "CANCELED") {
       await finishUrlFlow();
       notifyPaymentCancelled("PayPal payment complete nahi hua.");
       currentUrl.searchParams.delete("paypal_status");
@@ -288,7 +303,14 @@ const PayPalCheckoutButton = forwardRef(function PayPalCheckoutButton(
       return true;
     }
 
-    if ((status === "success" || urlOrderId || storedOrderId) && orderId) {
+    if (
+      (["SUCCESS", "COMPLETED", "PAID", "APPROVED"].includes(
+        normalizedUrlStatus
+      ) ||
+        urlOrderId ||
+        storedOrderId) &&
+      orderId
+    ) {
       try {
         await completeCapture({ orderId, payerId });
       } finally {

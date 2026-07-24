@@ -31,6 +31,11 @@ const WALLET_PAYPAL_CURRENCY = String(
   .trim()
   .toUpperCase();
 
+const normalizePaymentStatus = (value) =>
+  String(value || "")
+    .trim()
+    .toLowerCase();
+
 const getApprovalLink = (order) => {
   const links = Array.isArray(order?.links) ? order.links : [];
 
@@ -315,7 +320,11 @@ const capturePaypalRechargeOrder = asyncHandler(async (req, res) => {
     throw new AppError("Payment not found", 404, "PAYMENT_NOT_FOUND");
   }
 
-  if (payment.status === PAYMENT_STATUS.PAID) {
+  if (
+    [PAYMENT_STATUS.PAID, PAYMENT_STATUS.COMPLETED].includes(
+      normalizePaymentStatus(payment.status)
+    )
+  ) {
     return sendResponse(res, {
       statusCode: 200,
       message: "PayPal wallet payment already captured",
@@ -397,7 +406,7 @@ const capturePaypalRechargeOrder = asyncHandler(async (req, res) => {
 
   payment.paymentId = paymentId;
   payment.gatewayCaptureId = paymentId;
-  payment.status = PAYMENT_STATUS.PAID;
+  payment.status = PAYMENT_STATUS.COMPLETED;
   payment.meta = {
     ...payment.meta,
     capture,
@@ -441,6 +450,8 @@ const capturePaypalRechargeOrder = asyncHandler(async (req, res) => {
   sendResponse(res, {
     message: "Wallet recharged via PayPal",
     data: {
+      success: true,
+      status: PAYMENT_STATUS.COMPLETED,
       payment,
       orderId,
       paymentId,
@@ -479,7 +490,7 @@ const verifyRecharge = asyncHandler(async (req, res) => {
 
   const updatedPayment = await Payment.findOneAndUpdate(
     { _id: payment._id },
-    { paymentId, signature, status: PAYMENT_STATUS.PAID },
+    { paymentId, signature, status: PAYMENT_STATUS.COMPLETED },
     { new: true }
   );
 

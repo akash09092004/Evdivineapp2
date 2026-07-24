@@ -193,6 +193,16 @@ export const getMyBooking = async ({ bookingId, authToken = "" }) => {
   });
 };
 
+export const getBookingPaymentStatus = async ({
+  bookingId,
+  authToken = "",
+}) => {
+  return requestJson(
+    `/api/users/bookings/${encodeURIComponent(bookingId)}/payment-status`,
+    { authToken }
+  );
+};
+
 export const cancelMyBooking = async ({
   bookingId,
   reason = "",
@@ -206,4 +216,53 @@ export const cancelMyBooking = async ({
       body: { reason },
     }
   );
+};
+
+export const joinBookedChat = async ({ bookingId, authToken = "" }) => {
+  return requestJson(`/api/users/chat/${encodeURIComponent(bookingId)}/join`, {
+    method: "POST",
+    authToken,
+  });
+};
+
+export const getBookedChatMessages = async ({
+  bookingId,
+  authToken = "",
+  page = 1,
+  limit = 50,
+}) => {
+  const params = new URLSearchParams();
+  params.set("page", String(page));
+  params.set("limit", String(limit));
+
+  return requestJson(
+    `/api/users/chat/${encodeURIComponent(bookingId)}/messages?${params.toString()}`,
+    { authToken }
+  );
+};
+
+export const sendBookedChatMessage = async ({
+  bookingId,
+  message,
+  authToken = "",
+}) => {
+  return requestJson(`/api/users/chat/${encodeURIComponent(bookingId)}/messages`, {
+    method: "POST",
+    authToken,
+    body: {
+      message,
+    },
+  });
+};
+
+export const endBookedChat = async ({
+  bookingId,
+  reason = "",
+  authToken = "",
+}) => {
+  return requestJson(`/api/users/chat/${encodeURIComponent(bookingId)}/end`, {
+    method: "POST",
+    authToken,
+    body: { reason },
+  });
 };

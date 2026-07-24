@@ -30,24 +30,43 @@ const generateNumber = (prefix) =>
   `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
 
 const getWalletDocument = async (userId, session = null) => {
+  const user = await User.findById(userId).session(session || null);
+  const userBalance = Number(user?.walletBalance || 0);
   let wallet = await UserWallet.findOne({ user: userId }).session(session || null);
   if (!wallet) {
     wallet = new UserWallet({
       user: userId,
-      balance: 0,
-      availableBalance: 0,
-      totalCredited: 0,
+      balance: userBalance,
+      availableBalance: userBalance,
+      totalCredited: userBalance,
       totalDebited: 0,
       currency: DEFAULTS.CURRENCY,
       status: "active",
     });
     await wallet.save({ session });
+  } else {
+    const walletBalance = Number(wallet.availableBalance || wallet.balance || 0);
+    if (userBalance > walletBalance) {
+      wallet.balance = userBalance;
+      wallet.availableBalance = userBalance;
+      wallet.totalCredited = Math.max(Number(wallet.totalCredited || 0), userBalance);
+      await wallet.save({ session });
+    }
   }
   return wallet;
 };
 
 const syncUserWalletBalance = async (userId, balance, session = null) => {
   await User.updateOne({ _id: userId }, { $set: { walletBalance: balance } }).session(session || null);
+  await UserWallet.updateOne(
+    { user: userId },
+    {
+      $set: {
+        balance,
+        availableBalance: balance,
+      },
+    }
+  ).session(session || null);
 };
 
 const normalizePaymentStatus = (status) => {
@@ -227,8 +246,40 @@ const processWalletPaymentForBooking = async ({ bookingId, userId }) => {
   try {
     const booking = await Booking.findOne({ _id: bookingId, userId }).session(session);
     if (!booking) throw new AppError("Booking not found", 404, "BOOKING_NOT_FOUND");
+
+    const bookingStatus = String(booking.bookingStatus || "").toLowerCase();
+    const paymentStatus = String(booking.paymentStatus || "").toLowerCase();
+    const alreadyPaid =
+      bookingStatus === BOOKING_STATUS.CONFIRMED ||
+      paymentStatus === PAYMENT_STATUS.COMPLETED ||
+      paymentStatus === PAYMENT_STATUS.PAID;
+
+    if (alreadyPaid) {
+      const existingPayment = await Payment.findOne({
+        bookingId: booking._id,
+        user: userId,
+        purpose: "booking",
+      })
+        .sort({ createdAt: -1 })
+        .session(session);
+      const wallet = await getWalletDocument(userId, session);
+      await session.commitTransaction();
+      session.endSession();
+      return {
+        booking,
+        payment: existingPayment || null,
+        wallet,
+        alreadyPaid: true,
+        idempotent: true,
+      };
+    }
+
     if (booking.bookingStatus !== BOOKING_STATUS.PAYMENT_PENDING) {
-      throw new AppError("Booking is not in payment pending state", 409, "BOOKING_NOT_PAYABLE");
+      throw new AppError(
+        "Booking is not in payment pending state",
+        409,
+        "BOOKING_NOT_PAYABLE"
+      );
     }
 
     const wallet = await getWalletDocument(userId, session);
@@ -242,9 +293,23 @@ const processWalletPaymentForBooking = async ({ bookingId, userId }) => {
     const idempotencyKey = `wallet-booking:${booking._id.toString()}`;
     const existingTx = await WalletTransaction.findOne({ idempotencyKey }).session(session);
     if (existingTx) {
+      const existingPayment = await Payment.findOne({
+        bookingId: booking._id,
+        user: userId,
+        purpose: "booking",
+        status: PAYMENT_STATUS.COMPLETED,
+      })
+        .sort({ createdAt: -1 })
+        .session(session);
       await session.commitTransaction();
       session.endSession();
-      return { booking, wallet, idempotent: true };
+      return {
+        booking,
+        payment: existingPayment || null,
+        wallet,
+        idempotent: true,
+        alreadyPaid: true,
+      };
     }
 
     const balanceBefore = Number(wallet.availableBalance || wallet.balance || 0);

@@ -107,9 +107,17 @@ const createSlotPlan = asyncHandler(async (req, res) => {
     title: payload.title,
     consultationType: payload.consultationType,
     deletedAt: null,
-  }).lean();
+  });
   if (existing) {
-    throw new AppError("Slot plan already exists", 409, "SLOT_PLAN_EXISTS");
+    Object.assign(existing, payload, {
+      updatedBy: admin._id,
+    });
+    await existing.save();
+
+    return sendResponse(res, {
+      message: "Slot plan updated",
+      data: existing,
+    });
   }
 
   const plan = await SlotPlan.create({
@@ -144,6 +152,16 @@ const updateSlotPlan = asyncHandler(async (req, res) => {
     isActive: req.body.isActive ?? plan.isActive,
   };
   const payload = validateSlotPlanPayload(merged);
+
+  const duplicate = await SlotPlan.findOne({
+    _id: { $ne: plan._id },
+    title: payload.title,
+    consultationType: payload.consultationType,
+    deletedAt: null,
+  }).lean();
+  if (duplicate) {
+    throw new AppError("Slot plan already exists", 409, "SLOT_PLAN_EXISTS");
+  }
 
   Object.assign(plan, payload, {
     updatedBy: admin._id,

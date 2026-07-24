@@ -68,6 +68,11 @@ router.post(
 
 router.get("/users/bookings", requireUser, userCtrl.listMyBookings);
 router.get("/users/bookings/:bookingId", requireUser, userCtrl.getMyBooking);
+router.get(
+  "/users/bookings/:bookingId/payment-status",
+  requireUser,
+  userCtrl.getBookingPaymentStatus
+);
 router.post(
   "/users/bookings/:bookingId/cancel",
   requireUser,

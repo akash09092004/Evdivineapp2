@@ -4,5 +4,6 @@ const { requireUser } = require('../../middleware/authMiddleware');
 
 router.post('/order', requireUser, ctrl.createPaymentOrder);
 router.post('/verify', requireUser, ctrl.verifyPayment);
+router.get('/history', requireUser, ctrl.listPaymentHistory);
 
 module.exports = router;

@@ -124,7 +124,7 @@ export default function BookingScreen({ navigation, route }) {
 
       const bookingResponse = await createPendingBooking({
         lockId,
-        paymentMethod: "paypal",
+        paymentMethod: "wallet",
         authToken,
       });
 
@@ -152,7 +152,7 @@ export default function BookingScreen({ navigation, route }) {
         rashiName: String(route?.params?.rashiName || "").trim(),
         rashiSlug: String(route?.params?.rashiSlug || "").trim(),
         consultationPrice: rashiPrice,
-        paymentMethod: "paypal",
+        paymentMethod: "wallet",
         returnTo: "Booking",
         returnParams: {
           service: serviceName,

@@ -28,8 +28,16 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { io } from "socket.io-client";
 import { useAuth } from "../context/AuthContext";
 import { API_BASE_URL } from "../config/api";
+import {
+  endBookedChat,
+  getBookedChatMessages,
+  joinBookedChat,
+  sendBookedChatMessage,
+} from "../Services/bookingApi";
 
 const POLL_INTERVAL_MS = 5000;
+const BOOKING_JOIN_BEFORE_MINUTES = 5;
+const BOOKING_JOIN_GRACE_MINUTES = 10;
 
 const formatTime = (value) => {
   if (!value) return "";
@@ -56,6 +64,27 @@ const formatDurationClock = (totalSeconds) => {
   }
 
   return `${pad2(minutes)}:${pad2(seconds)}`;
+};
+
+const getBookingJoinWindow = (booking) => {
+  const startAt = new Date(booking?.startAt || 0).getTime();
+  const endAt = new Date(booking?.endAt || 0).getTime();
+
+  if (!Number.isFinite(startAt) || !Number.isFinite(endAt) || endAt <= startAt) {
+    return {
+      open: false,
+      windowStart: 0,
+      windowEnd: 0,
+    };
+  }
+
+  return {
+    open:
+      Date.now() >= startAt - BOOKING_JOIN_BEFORE_MINUTES * 60 * 1000 &&
+      Date.now() <= endAt + BOOKING_JOIN_GRACE_MINUTES * 60 * 1000,
+    windowStart: startAt - BOOKING_JOIN_BEFORE_MINUTES * 60 * 1000,
+    windowEnd: endAt + BOOKING_JOIN_GRACE_MINUTES * 60 * 1000,
+  };
 };
 
 const extractFileName = (value) => {
@@ -121,11 +150,20 @@ const loadVoiceModule = () => {
   }
 };
 
+const loadWebSpeechRecognition = () => {
+  if (Platform.OS !== "web" || typeof window === "undefined") {
+    return null;
+  }
+
+  return window.SpeechRecognition || window.webkitSpeechRecognition || null;
+};
+
 export default function ChatSession({ navigation, route }) {
   const insets = useSafeAreaInsets();
   const { authToken, authReady, isAuthenticated } = useAuth();
   const listRef = useRef(null);
   const voiceRef = useRef(null);
+  const webSpeechRef = useRef(null);
 
   const [loading, setLoading] = useState(true);
   const [requesting, setRequesting] = useState(false);
@@ -165,7 +203,20 @@ export default function ChatSession({ navigation, route }) {
   }, []);
 
   const effectiveStatus = session?.status || chatAccessStatus || "none";
-  const isChatActive = ["approved", "active"].includes(effectiveStatus);
+  const bookingChatMode = Boolean(currentBooking?._id);
+  const bookingWindow = getBookingJoinWindow(currentBooking);
+  const bookingStatus = String(currentBooking?.bookingStatus || "").toLowerCase();
+  const bookedSessionStatus = String(session?.status || "").toLowerCase();
+  const isChatActive = bookingChatMode
+    ? bookingWindow.open &&
+      [
+        "confirmed",
+        "ready",
+        "waiting_for_admin",
+        "in_progress",
+        "active",
+      ].includes(bookingStatus || bookedSessionStatus)
+    : ["approved", "active"].includes(effectiveStatus);
   const hasSession = Boolean(session?._id);
   const canShowThread = hasSession || isChatActive;
   const composerBusy = sending || uploadingAttachment;
@@ -255,6 +306,80 @@ export default function ChatSession({ navigation, route }) {
     };
   }, []);
 
+  useEffect(() => {
+    if (Platform.OS !== "web") {
+      return undefined;
+    }
+
+    const SpeechRecognition = loadWebSpeechRecognition();
+    if (!SpeechRecognition) {
+      return undefined;
+    }
+
+    const recognition = new SpeechRecognition();
+    recognition.lang = "en-IN";
+    recognition.continuous = false;
+    recognition.interimResults = true;
+    recognition.maxAlternatives = 1;
+
+    recognition.onstart = () => {
+      setListening(true);
+      setSpeechHint("Listening...");
+    };
+
+    recognition.onend = () => {
+      setListening(false);
+      setSpeechHint("");
+    };
+
+    recognition.onerror = (event) => {
+      setListening(false);
+      setSpeechHint("");
+      const message =
+        event?.error === "not-allowed"
+          ? "Microphone permission denied"
+          : event?.error || "Voice recognition failed";
+      Alert.alert("Mic error", String(message));
+    };
+
+    recognition.onresult = (event) => {
+      let finalText = "";
+      let interimText = "";
+
+      for (let i = event.resultIndex; i < event.results.length; i += 1) {
+        const result = event.results[i];
+        const transcript = result?.[0]?.transcript?.trim?.() || "";
+        if (!transcript) continue;
+
+        if (result.isFinal) {
+          finalText = finalText ? `${finalText} ${transcript}` : transcript;
+        } else {
+          interimText = interimText ? `${interimText} ${transcript}` : transcript;
+        }
+      }
+
+      if (finalText) {
+        setText((prev) => {
+          const next = prev.trim();
+          return next ? `${next} ${finalText}` : finalText;
+        });
+      }
+
+      setSpeechHint(interimText || "");
+    };
+
+    webSpeechRef.current = recognition;
+
+    return () => {
+      try {
+        recognition.abort();
+      } catch {}
+      if (webSpeechRef.current === recognition) {
+        webSpeechRef.current = null;
+      }
+    };
+  }, []);
+
   const ensureMicPermission = useCallback(async () => {
     if (Platform.OS !== "android") {
       return true;
@@ -337,10 +462,17 @@ export default function ChatSession({ navigation, route }) {
         requiresWallet: false,
         chargeAmount: 1,
       };
+      const bookingSession =
+        nextBooking?._id &&
+        sessionList.find(
+          (item) =>
+            String(item?.bookingId || "") === String(nextBooking?._id || "")
+        );
       const preferredSession =
+        bookingSession ||
         statusData?.data?.session ||
         sessionList.find((item) =>
-          ["approved", "active", "pending"].includes(item?.status)
+          ["approved", "active", "pending", "waiting", "in_progress", "ready"].includes(item?.status)
         ) ||
         sessionList[0] ||
         null;
@@ -354,7 +486,73 @@ export default function ChatSession({ navigation, route }) {
       setSessions(sessionList);
       setSession(preferredSession);
 
-      if (preferredSession?._id) {
+      if (nextBooking?._id) {
+        const bookingSessionStatus = String(bookingSession?.status || "").toLowerCase();
+        const bookingStatusNow = String(nextBooking?.bookingStatus || "").toLowerCase();
+        const bookingWindowOpen = getBookingJoinWindow(nextBooking).open;
+        const needsJoin =
+          bookingWindowOpen &&
+          ![
+            "waiting",
+            "active",
+            "in_progress",
+            "completed",
+            "cancelled",
+            "expired",
+            "waiting_for_admin",
+          ].includes(bookingSessionStatus) &&
+          ["confirmed", "ready"].includes(bookingStatusNow);
+
+        if (needsJoin) {
+          try {
+            const joinResponse = await joinBookedChat({
+              bookingId: nextBooking._id,
+              authToken,
+            });
+            const joinData = joinResponse?.data?.data || joinResponse?.data || {};
+            const joinedBooking = joinData?.booking || nextBooking;
+            const joinedChat = joinData?.chat || preferredSession || bookingSession || null;
+
+            setCurrentBooking(joinedBooking);
+            if (joinedChat?._id) {
+              setSession(joinedChat);
+            }
+          } catch (joinError) {
+            console.log(
+              "[ChatSession] joinBookedChat failed",
+              joinError?.message || joinError
+            );
+          }
+        }
+
+        try {
+          const messagesResponse = await getBookedChatMessages({
+            bookingId: nextBooking._id,
+            authToken,
+          });
+          const messagesData = messagesResponse?.data?.data || messagesResponse?.data || {};
+          const items = Array.isArray(messagesData?.messages)
+            ? messagesData.messages.map(normalizeMessage).filter(Boolean)
+            : [];
+          setMessages(items);
+          const liveSession = messagesData?.chat || preferredSession || bookingSession || null;
+          if (liveSession?._id) {
+            setSession(liveSession);
+          }
+          if (messagesData?.booking?._id) {
+            setCurrentBooking(messagesData.booking);
+          }
+          if (liveSession?.status) {
+            setChatAccessStatus(String(liveSession.status).toLowerCase());
+          }
+        } catch (threadError) {
+          console.log(
+            "[ChatSession] booked messages load failed",
+            threadError?.message || threadError
+          );
+          setMessages([]);
+        }
+      } else if (preferredSession?._id) {
         const threadKey = preferredSession._id || preferredSession.chatroomId;
         const threadResponse = await fetch(
           `${API_BASE_URL}/api/users/chat/sessions/${threadKey}/messages`,
@@ -525,7 +723,11 @@ export default function ChatSession({ navigation, route }) {
   };
 
   const handleEndChat = () => {
-    if (!session?._id) {
+    const targetBookingId = String(
+      currentBooking?._id || session?.bookingId || ""
+    ).trim();
+
+    if (!session?._id && !targetBookingId) {
       Alert.alert("No chat", "End karne ke liye active chat session nahi mila.");
       return;
     }
@@ -540,27 +742,89 @@ export default function ChatSession({ navigation, route }) {
           style: "destructive",
           onPress: async () => {
             try {
-              const response = await fetch(
-                `${API_BASE_URL}/api/users/chat/sessions/${session._id}/end`,
-                {
-                  method: "POST",
-                  headers: {
-                    "Content-Type": "application/json",
-                    Authorization: `Bearer ${authToken}`,
-                  },
-                  body: JSON.stringify({ reason: "Ended by user" }),
-                }
-              );
-              const data = await response.json();
+              if (targetBookingId) {
+                await endBookedChat({
+                  bookingId: targetBookingId,
+                  reason: "Ended by user",
+                  authToken,
+                });
+              } else {
+                const response = await fetch(
+                  `${API_BASE_URL}/api/users/chat/sessions/${session._id}/end`,
+                  {
+                    method: "POST",
+                    headers: {
+                      "Content-Type": "application/json",
+                      Authorization: `Bearer ${authToken}`,
+                    },
+                    body: JSON.stringify({ reason: "Ended by user" }),
+                  }
+                );
+                const data = await response.json();
 
-              if (!response.ok) {
-                throw new Error(data?.message || "Chat end failed");
+                if (!response.ok) {
+                  throw new Error(data?.message || "Chat end failed");
+                }
               }
 
+              setMessages([]);
+              setText("");
+              setChatAccessStatus("completed");
+              setSession((prev) =>
+                prev
+                  ? {
+                      ...prev,
+                      status: "completed",
+                      endedAt: new Date().toISOString(),
+                    }
+                  : prev
+              );
+              setCurrentBooking((prev) =>
+                prev
+                  ? {
+                      ...prev,
+                      bookingStatus: "completed",
+                    }
+                  : prev
+              );
               await loadChat();
+              navigation?.navigate?.("MainTabs", { screen: "Booking" });
               Alert.alert("Chat ended", "Aapki chat successfully end ho gayi.");
             } catch (error) {
-              Alert.alert("Error", error?.message || "Chat end nahi ho payi.");
+              const message = String(error?.message || "");
+              if (
+                message.includes("already completed") ||
+                message.includes("not active")
+              ) {
+                setMessages([]);
+                setText("");
+                setChatAccessStatus("completed");
+                setSession((prev) =>
+                  prev
+                    ? {
+                        ...prev,
+                        status: "completed",
+                        endedAt: new Date().toISOString(),
+                      }
+                    : prev
+                );
+                setCurrentBooking((prev) =>
+                  prev
+                    ? {
+                        ...prev,
+                        bookingStatus: "completed",
+                      }
+                    : prev
+                );
+                navigation?.navigate?.("MainTabs", { screen: "Booking" });
+                Alert.alert(
+                  "Chat ended",
+                  "Chat pehle se end thi, screen close kar di gayi."
+                );
+                return;
+              }
+
+              Alert.alert("Error", message || "Chat end nahi ho payi.");
             }
           },
         },
@@ -611,11 +875,16 @@ export default function ChatSession({ navigation, route }) {
     mediaUrl = "",
     metadata = {},
   } = {}) => {
-    if (!session?._id) return false;
+    const targetBookingId = String(
+      currentBooking?._id || session?.bookingId || ""
+    ).trim();
+    if (!session?._id && !targetBookingId) return false;
     if (!isChatActive) {
       Alert.alert(
         "Chat not active",
-        "Chat tabhi send hoga jab admin approve karega."
+        bookingChatMode
+          ? "Booked slot start hone aur join window open hone ke baad hi message bhej paoge."
+          : "Chat tabhi send hoga jab admin approve karega."
       );
       return false;
     }
@@ -643,39 +912,60 @@ export default function ChatSession({ navigation, route }) {
       return false;
     }
 
-    const response = await fetch(
-      `${API_BASE_URL}/api/users/chat/sessions/${session._id}/messages`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${authToken}`,
-        },
-        body: JSON.stringify({
-          text: trimmedText,
-          type,
-          mediaUrl,
-          transcription: "",
-          metadata,
-        }),
-      }
-    );
-    const data = await response.json();
+    let data = null;
+    if (targetBookingId) {
+      const bookedResponse = await sendBookedChatMessage({
+        bookingId: targetBookingId,
+        message: trimmedText,
+        authToken,
+      });
+      data = bookedResponse?.data || null;
+    } else {
+      const response = await fetch(
+        `${API_BASE_URL}/api/users/chat/sessions/${session._id}/messages`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${authToken}`,
+          },
+          body: JSON.stringify({
+            text: trimmedText,
+            type,
+            mediaUrl,
+            transcription: "",
+            metadata,
+          }),
+        }
+      );
+      data = await response.json();
 
-    if (!response.ok) {
-      throw new Error(data?.message || "Message send failed");
+      if (!response.ok) {
+        throw new Error(data?.message || "Message send failed");
+      }
     }
 
-    setMessages((prev) => mergeIncomingMessage(prev, data?.data));
-    setSession((prev) =>
-      prev
-        ? {
-            ...prev,
-            status: data?.data?.status || prev.status,
-            lastMessageAt: new Date().toISOString(),
-          }
-        : prev
-    );
+    const nextMessage = data?.data?.message || data?.data;
+    if (nextMessage) {
+      setMessages((prev) => mergeIncomingMessage(prev, nextMessage));
+    }
+    if (data?.data?.chat) {
+      setSession((prev) => ({
+        ...(prev || {}),
+        ...data.data.chat,
+        lastMessageAt: new Date().toISOString(),
+      }));
+    } else {
+      setSession((prev) =>
+        prev
+          ? {
+              ...prev,
+              status: data?.data?.status || prev.status,
+              lastMessageAt: new Date().toISOString(),
+            }
+          : prev
+      );
+    }
     return true;
   };
 
@@ -746,6 +1036,14 @@ export default function ChatSession({ navigation, route }) {
   const handleAttachment = async (kind) => {
     if (!authToken || !session?._id) return;
 
+    if (bookingChatMode) {
+      Alert.alert(
+        "Attachments unavailable",
+        "Booked chat abhi text-only mode me hai. Please message type karo."
+      );
+      return;
+    }
+
     const accept = kind === "image" ? "image/*" : "*/*";
     try {
       const file = await pickWebFile(accept);
@@ -787,10 +1085,45 @@ export default function ChatSession({ navigation, route }) {
       return;
     }
 
+    if (Platform.OS === "web") {
+      try {
+        const SpeechRecognition = loadWebSpeechRecognition();
+        const recognition =
+          webSpeechRef.current || (SpeechRecognition ? new SpeechRecognition() : null);
+
+        if (!recognition) {
+          Alert.alert(
+            "Voice unavailable",
+            "Is browser me speech recognition support nahi hai. Chrome use karo ya keyboard use karo."
+          );
+          return;
+        }
+
+        recognition.lang = "en-IN";
+        recognition.continuous = false;
+        recognition.interimResults = true;
+        recognition.maxAlternatives = 1;
+
+        if (listening) {
+          recognition.stop?.();
+          return;
+        }
+
+        webSpeechRef.current = recognition;
+        recognition.start?.();
+        return;
+      } catch (error) {
+        setListening(false);
+        setSpeechHint("");
+        Alert.alert("Mic error", error?.message || "Unable to start voice input");
+        return;
+      }
+    }
+
     if (Platform.OS !== "android") {
       Alert.alert(
         "Voice input unavailable",
-        "iPhone Expo Go me voice recognition supported nahi hai. App ko development build me run karo ya keyboard use karo."
+        "This device/platform does not support voice recognition in the current build."
       );
       return;
     }
@@ -844,24 +1177,37 @@ export default function ChatSession({ navigation, route }) {
 
       try {
         setLoading(true);
-        const response = await fetch(
-          `${API_BASE_URL}/api/users/chat/sessions/${item._id}/messages`,
-          {
-            headers: {
-              Authorization: `Bearer ${authToken}`,
-            },
+        const isBookedThread = Boolean(item?.bookingId);
+        const response = isBookedThread
+          ? await getBookedChatMessages({
+              bookingId: item.bookingId,
+              authToken,
+            })
+          : await fetch(
+              `${API_BASE_URL}/api/users/chat/sessions/${item._id}/messages`,
+              {
+                headers: {
+                  Authorization: `Bearer ${authToken}`,
+                },
+              }
+            ).then(async (res) => ({ ok: res.ok, data: await res.json() }));
+
+        if (isBookedThread) {
+          const bookedPayload = response?.data?.data || response?.data || {};
+          const items = Array.isArray(bookedPayload?.messages)
+            ? bookedPayload.messages.map(normalizeMessage).filter(Boolean)
+            : [];
+          setMessages(items);
+        } else {
+          if (!response.ok) {
+            throw new Error(response?.data?.message || "Unable to load messages");
           }
-        );
-        const data = await response.json();
 
-        if (!response.ok) {
-          throw new Error(data?.message || "Unable to load messages");
+          const items = Array.isArray(response?.data?.messages)
+            ? response.data.messages.map(normalizeMessage).filter(Boolean)
+            : [];
+          setMessages(items);
         }
-
-        const items = Array.isArray(data?.data?.messages)
-          ? data.data.messages.map(normalizeMessage).filter(Boolean)
-          : [];
-        setMessages(items);
         socketRef.current?.emit?.(
           "chat:join",
           {
@@ -907,6 +1253,15 @@ export default function ChatSession({ navigation, route }) {
       };
     }
 
+    if (bookingChatMode && !bookingWindow.open) {
+      return {
+        icon: "time-outline",
+        title: "Booked slot pending",
+        subtitle:
+          "Aapka slot booked hai. Chat 5 minute pehle open hogi, phir aap message bhej sakoge.",
+      };
+    }
+
     if (
       !hasSession ||
       effectiveStatus === "pending" ||
@@ -932,6 +1287,8 @@ export default function ChatSession({ navigation, route }) {
     chatAccessReason,
     effectiveStatus,
     hasSession,
+    bookingChatMode,
+    bookingWindow.open,
     isAuthenticated,
     loading,
     requesting,
