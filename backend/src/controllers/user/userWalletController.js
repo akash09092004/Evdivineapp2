@@ -21,6 +21,7 @@ const { sendResponse } = require("../../utils/responseHandler");
 const AppError = require("../../utils/AppError");
 const { PAYMENT_STATUS } = require("../../utils/constants");
 const { isValidObjectId } = require("mongoose");
+const { getUserWallet } = require("../../services/walletService");
 
 const MIN_CUSTOM_RECHARGE_AMOUNT = Number(
   process.env.MIN_RECHARGE_AMOUNT || 100
@@ -36,6 +37,12 @@ const normalizePaymentStatus = (value) =>
     .trim()
     .toLowerCase();
 
+const isAlreadyCapturedPayPalError = (error) =>
+  error?.code === "PAYPAL_ORDER_CAPTURE_FAILED" &&
+  String(error?.data?.details?.[0]?.issue || "")
+    .trim()
+    .toUpperCase() === "ORDER_ALREADY_CAPTURED";
+
 const getApprovalLink = (order) => {
   const links = Array.isArray(order?.links) ? order.links : [];
 
@@ -50,8 +57,8 @@ const getApprovalLink = (order) => {
 };
 
 const getBalance = asyncHandler(async (req, res) => {
-  const user = await User.findById(req.auth.id).lean();
-  const balance = Number(user?.walletBalance || 0);
+  const wallet = await getUserWallet(req.auth.id);
+  const balance = Number(wallet?.availableBalance || wallet?.balance || 0);
   const threshold = await getLowWalletAlertThreshold();
   sendResponse(res, {
     data: {
@@ -325,27 +332,132 @@ const capturePaypalRechargeOrder = asyncHandler(async (req, res) => {
       normalizePaymentStatus(payment.status)
     )
   ) {
+    const walletReference = payment._id.toString();
+    const walletTxExists = await WalletTransaction.exists({
+      ownerType: "user",
+      owner: req.auth.id,
+      type: "wallet_recharge",
+      reference: walletReference,
+      direction: "credit",
+    });
+    const invoiceExists = await Invoice.exists({ payment: payment._id });
+
+    if (!walletTxExists) {
+      const expectedAmount = Number(payment.expectedAmount || payment.amount || 0);
+      const paymentId =
+        payment.paymentId ||
+        payment.meta?.paymentId ||
+        orderId;
+
+      await creditWallet({
+        ownerType: "user",
+        ownerId: req.auth.id,
+        amount: expectedAmount,
+        type: "wallet_recharge",
+        reference: walletReference,
+        meta: {
+          gateway: "paypal",
+          currency: String(payment.currency || WALLET_PAYPAL_CURRENCY)
+            .trim()
+            .toUpperCase(),
+          orderId,
+          paymentId,
+          finalizedAfterRetry: true,
+        },
+      });
+    }
+
+    if (!invoiceExists) {
+      try {
+        await createInvoice({
+          userId: req.auth.id,
+          paymentId: payment._id,
+          amount: Number(payment.expectedAmount || payment.amount || 0),
+          currency: String(payment.currency || WALLET_PAYPAL_CURRENCY)
+            .trim()
+            .toUpperCase(),
+          gstPercent: Number(process.env.GST_PERCENT || 0),
+          metadata: {
+            purpose: payment.purpose,
+            gateway: "paypal",
+            currency: String(payment.currency || WALLET_PAYPAL_CURRENCY)
+              .trim()
+              .toUpperCase(),
+            orderId,
+            paymentId:
+              payment.paymentId ||
+              payment.meta?.paymentId ||
+              orderId,
+            finalizedAfterRetry: true,
+          },
+        });
+      } catch (invoiceError) {
+        payment.meta = {
+          ...payment.meta,
+          invoiceCreationFailed: true,
+          invoiceError: invoiceError.message,
+        };
+        await payment.save();
+      }
+    }
+
     return sendResponse(res, {
       statusCode: 200,
       message: "PayPal wallet payment already captured",
       data: {
         payment,
         alreadyCaptured: true,
+        finalizedAfterRetry: !walletTxExists,
       },
     });
   }
 
-  const capture = await capturePayPalOrder({ orderId, payerId });
+  const expectedAmount = Number(payment.expectedAmount || payment.amount || 0);
+  const expectedCurrency = String(payment.currency || WALLET_PAYPAL_CURRENCY)
+    .trim()
+    .toUpperCase();
+
+  let capture;
+  try {
+    capture = await capturePayPalOrder({ orderId, payerId });
+  } catch (error) {
+    if (!isAlreadyCapturedPayPalError(error)) {
+      throw error;
+    }
+
+    capture = {
+      status: "COMPLETED",
+      id: payment.paymentId || orderId,
+      purchase_units: [
+        {
+          payments: {
+            captures: [
+              {
+                id: payment.paymentId || orderId,
+                status: "COMPLETED",
+                amount: {
+                  value: expectedAmount.toFixed(2),
+                  currency_code: expectedCurrency,
+                },
+              },
+            ],
+          },
+        },
+      ],
+    };
+  }
+
   const captureStatus = String(
     capture?.purchase_units?.[0]?.payments?.captures?.[0]?.status ||
       capture?.status ||
-      ""
+      "COMPLETED"
   ).toUpperCase();
   const paymentId =
     capture?.purchase_units?.[0]?.payments?.captures?.[0]?.id ||
     capture?.purchase_units?.[0]?.payments?.captures?.[0]?.invoice_id ||
     capture?.id ||
-    "";
+    payment.paymentId ||
+    orderId;
 
   if (captureStatus !== "COMPLETED") {
     payment.status = PAYMENT_STATUS.FAILED;
@@ -365,16 +477,14 @@ const capturePaypalRechargeOrder = asyncHandler(async (req, res) => {
   }
 
   const capturedAmount = Number(
-    capture?.purchase_units?.[0]?.payments?.captures?.[0]?.amount?.value || 0
+    capture?.purchase_units?.[0]?.payments?.captures?.[0]?.amount?.value ||
+      expectedAmount ||
+      0
   );
   const capturedCurrency = String(
     capture?.purchase_units?.[0]?.payments?.captures?.[0]?.amount
       ?.currency_code || ""
   )
-    .trim()
-    .toUpperCase();
-  const expectedAmount = Number(payment.expectedAmount || payment.amount || 0);
-  const expectedCurrency = String(payment.currency || WALLET_PAYPAL_CURRENCY)
     .trim()
     .toUpperCase();
 

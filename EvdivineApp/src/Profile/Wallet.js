@@ -76,6 +76,7 @@ const normalizeHistoryEntry = (item, source = "transaction") => {
     item?.amount ?? item?.expectedAmount ?? item?.meta?.paymentAmount ?? 0
   );
   const purpose = String(item?.purpose || item?.type || "").toLowerCase();
+  const status = String(item?.status || "completed").toLowerCase();
   const isCreditPurpose =
     purpose.includes("wallet_recharge") ||
     purpose.includes("refund") ||
@@ -106,7 +107,7 @@ const normalizeHistoryEntry = (item, source = "transaction") => {
     direction,
     reference,
     createdAt,
-    status: String(item?.status || "completed").toLowerCase(),
+    status,
     type: item?.type || item?.purpose || source,
     description:
       item?.description ||
@@ -662,12 +663,34 @@ const Wallet = ({ navigation }) => {
                 <View style={styles.txList}>
                   {transactions.map((tx) => {
                     const amountValue = Number(tx.amount || 0);
+                    const status = String(tx.status || "").toLowerCase();
+                    const isPending =
+                      status === "pending" ||
+                      status === "processing" ||
+                      status === "created";
                     const isCredit =
+                      !isPending &&
                       amountValue >= 0 &&
                       String(tx.type || tx.purpose || "")
                         .toLowerCase()
                         .includes("credit");
-                    const txColor = isCredit ? "#16A34A" : "#A34B1F";
+                    const txColor = isPending
+                      ? "#D97706"
+                      : isCredit
+                      ? "#16A34A"
+                      : "#A34B1F";
+                    const txTitle =
+                      isPending &&
+                      String(tx.type || tx.purpose || "")
+                        .toLowerCase()
+                        .includes("wallet_recharge")
+                        ? "Wallet recharge pending"
+                        : tx.type || tx.purpose || "Wallet transaction";
+                    const txAmountPrefix = isPending
+                      ? "~"
+                      : amountValue >= 0
+                      ? "+"
+                      : "-";
 
                     return (
                       <View
@@ -682,7 +705,9 @@ const Wallet = ({ navigation }) => {
                         >
                           <Ionicons
                             name={
-                              isCredit
+                              isPending
+                                ? "time-outline"
+                                : isCredit
                                 ? "arrow-down-circle-outline"
                                 : "arrow-up-circle-outline"
                             }
@@ -694,10 +719,10 @@ const Wallet = ({ navigation }) => {
                         <View style={styles.txBody}>
                           <View style={styles.txTopRow}>
                             <Text style={styles.txTitle}>
-                              {tx.type || tx.purpose || "Wallet transaction"}
+                              {txTitle}
                             </Text>
                             <Text style={[styles.txAmount, { color: txColor }]}>
-                              {amountValue >= 0 ? "+" : "-"}
+                              {txAmountPrefix}
                               {formatUSD(Math.abs(amountValue))}
                             </Text>
                           </View>
@@ -712,7 +737,7 @@ const Wallet = ({ navigation }) => {
                               {formatUSD(tx.balanceAfter || tx.balance || 0)}
                             </Text>
                             <Text style={styles.txMetaSmall}>
-                              {tx.status || "success"}
+                              {isPending ? "pending" : tx.status || "success"}
                             </Text>
                           </View>
                         </View>

@@ -10,12 +10,20 @@ const AppError = require("../../utils/AppError");
 
 const Payment = require("../../models/common/Payment");
 const { PAYMENT_STATUS } = require("../../utils/constants");
+const WalletTransaction = require("../../models/common/WalletTransaction");
+const Invoice = require("../../models/common/Invoice");
 
 const { createInvoice } = require("../../services/invoiceService");
 const { creditWallet } = require("../../services/walletService");
 
 const DEFAULT_PURPOSE = "wallet_recharge";
 const PAYPAL_CURRENCY = "USD";
+
+const isAlreadyCapturedPayPalError = (error) =>
+  error?.code === "PAYPAL_ORDER_CAPTURE_FAILED" &&
+  String(error?.data?.details?.[0]?.issue || "")
+    .trim()
+    .toUpperCase() === "ORDER_ALREADY_CAPTURED";
 
 const getPurchaseUnitCapture = (capture) =>
   capture?.purchase_units?.[0]?.payments?.captures?.[0] || null;
@@ -218,24 +226,120 @@ const captureOrder = asyncHandler(async (req, res) => {
    * Same payment dobara credit nahi hogi.
    */
   if (payment.status === PAYMENT_STATUS.PAID) {
+    const walletReference = payment._id.toString();
+    const walletTxExists = await WalletTransaction.exists({
+      ownerType: "user",
+      owner: req.auth.id,
+      type: "wallet_recharge",
+      reference: walletReference,
+      direction: "credit",
+    });
+    const invoiceExists = await Invoice.exists({ payment: payment._id });
+
+    if (!walletTxExists) {
+      const expectedAmount = Number(payment.expectedAmount || payment.amount || 0);
+      const expectedCurrency = String(payment.currency || PAYPAL_CURRENCY)
+        .trim()
+        .toUpperCase();
+
+      await creditWallet({
+        ownerType: "user",
+        ownerId: req.auth.id,
+        amount: expectedAmount,
+        type: "wallet_recharge",
+        reference: walletReference,
+        meta: {
+          gateway: "paypal",
+          currency: expectedCurrency,
+          orderId,
+          paymentId: payment.paymentId || orderId,
+          finalizedAfterRetry: true,
+        },
+      });
+    }
+
+    if (!invoiceExists) {
+      try {
+        await createInvoice({
+          userId: req.auth.id,
+          paymentId: payment._id,
+          amount: Number(payment.expectedAmount || payment.amount || 0),
+          currency: String(payment.currency || PAYPAL_CURRENCY)
+            .trim()
+            .toUpperCase(),
+          gstPercent: Number(process.env.GST_PERCENT || 0),
+          metadata: {
+            purpose: payment.purpose,
+            gateway: "paypal",
+            currency: String(payment.currency || PAYPAL_CURRENCY)
+              .trim()
+              .toUpperCase(),
+            orderId,
+            paymentId: payment.paymentId || orderId,
+            finalizedAfterRetry: true,
+          },
+        });
+      } catch (invoiceError) {
+        payment.meta = {
+          ...payment.meta,
+          invoiceCreationFailed: true,
+          invoiceError: invoiceError.message,
+        };
+
+        await payment.save();
+      }
+    }
+
     return sendResponse(res, {
       statusCode: 200,
       message: "PayPal payment already captured",
       data: {
         payment,
         alreadyCaptured: true,
+        finalizedAfterRetry: !walletTxExists,
       },
     });
   }
 
-  const capture = await capturePayPalOrder({
-    orderId,
-    payerId,
-  });
+  const expectedAmount = Number(payment.expectedAmount || payment.amount || 0);
+  const expectedCurrency = PAYPAL_CURRENCY;
 
-  const captureStatus = String(getCaptureStatus(capture)).toUpperCase();
+  let capture;
+  try {
+    capture = await capturePayPalOrder({
+      orderId,
+      payerId,
+    });
+  } catch (error) {
+    if (!isAlreadyCapturedPayPalError(error)) {
+      throw error;
+    }
 
-  const paymentId = getPurchaseUnitCaptureId(capture);
+    capture = {
+      status: "COMPLETED",
+      id: payment.paymentId || orderId,
+      purchase_units: [
+        {
+          payments: {
+            captures: [
+              {
+                id: payment.paymentId || orderId,
+                status: "COMPLETED",
+                amount: {
+                  value: expectedAmount.toFixed(2),
+                  currency_code: expectedCurrency,
+                },
+              },
+            ],
+          },
+        },
+      ],
+    };
+  }
+
+  const captureStatus = String(getCaptureStatus(capture) || "COMPLETED").toUpperCase();
+
+  const paymentId = getPurchaseUnitCaptureId(capture) || payment.paymentId || orderId;
 
   if (captureStatus !== "COMPLETED") {
     payment.status = PAYMENT_STATUS.FAILED;
@@ -257,10 +361,6 @@ const captureOrder = asyncHandler(async (req, res) => {
   }
 
   const captured = getCapturedAmountDetails(capture);
-
-  const expectedAmount = Number(payment.expectedAmount || payment.amount || 0);
-
-  const expectedCurrency = PAYPAL_CURRENCY;
 
   const amountMatches =
     Number.isFinite(captured.amount) &&

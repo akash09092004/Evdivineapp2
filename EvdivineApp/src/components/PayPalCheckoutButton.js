@@ -16,6 +16,7 @@ import {
   View,
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import * as ExpoLinking from "expo-linking";
 import * as WebBrowser from "expo-web-browser";
 
 import { useAuth } from "../context/AuthContext";
@@ -25,6 +26,7 @@ WebBrowser.maybeCompleteAuthSession();
 
 const SUCCESS_PREFIX = "evdivineapp://paypal-success";
 const CANCEL_PREFIX = "evdivineapp://paypal-cancel";
+const PAYPAL_RETURN_PATH = "paypal-return";
 const PENDING_ORDER_KEY = "paypalPendingOrderId";
 
 const getBrowserRedirectUrl = (status) => {
@@ -36,6 +38,22 @@ const getBrowserRedirectUrl = (status) => {
   url.searchParams.set("paypal_status", status);
   url.searchParams.delete("paypal_token");
   return url.toString();
+};
+
+const getMobileRedirectUrl = () => ExpoLinking.createURL(PAYPAL_RETURN_PATH);
+
+const isMobileReturnUrl = (url) => {
+  if (!url) {
+    return false;
+  }
+
+  const mobileRedirectUrl = getMobileRedirectUrl();
+
+  return (
+    url.startsWith(mobileRedirectUrl) ||
+    url.includes(PAYPAL_RETURN_PATH) ||
+    url.includes("paypal-return")
+  );
 };
 
 const parsePayPalReturnUrl = (url) => {
@@ -178,6 +196,10 @@ const PayPalCheckoutButton = forwardRef(function PayPalCheckoutButton(
     }
   };
 
+  const isPaymentCancelledError = (error) =>
+    error?.code === "PAYPAL_PAYMENT_CANCELLED" ||
+    error?.name === "PAYPAL_PAYMENT_CANCELLED";
+
   const notifyPaymentPending = (response, fallbackMessage) => {
     onPaymentPending?.(response);
 
@@ -244,7 +266,7 @@ const PayPalCheckoutButton = forwardRef(function PayPalCheckoutButton(
     return handleRedirectUrl(url);
   };
 
-  const openPayPalCheckout = async (approvalUrl) => {
+  const openPayPalCheckout = async (approvalUrl, redirectUrl) => {
     if (!approvalUrl) {
       throw new Error("PayPal approval URL missing");
     }
@@ -256,7 +278,7 @@ const PayPalCheckoutButton = forwardRef(function PayPalCheckoutButton(
 
     const result = await WebBrowser.openAuthSessionAsync(
       approvalUrl,
-      SUCCESS_PREFIX
+      redirectUrl || SUCCESS_PREFIX
     );
 
     if (result.type === "success" && result.url) {
@@ -265,7 +287,8 @@ const PayPalCheckoutButton = forwardRef(function PayPalCheckoutButton(
     }
 
     if (result.type === "cancel" || result.type === "dismiss") {
-      throw new Error("PayPal payment cancelled");
+      notifyPaymentCancelled("PayPal payment complete nahi hua.");
+      return;
     }
   };
 
@@ -339,7 +362,10 @@ const PayPalCheckoutButton = forwardRef(function PayPalCheckoutButton(
       return true;
     }
 
-    if (!url.startsWith(SUCCESS_PREFIX)) {
+    const isSuccessRedirect =
+      url.startsWith(SUCCESS_PREFIX) || isMobileReturnUrl(url);
+
+    if (!isSuccessRedirect) {
       return false;
     }
 
@@ -351,7 +377,8 @@ const PayPalCheckoutButton = forwardRef(function PayPalCheckoutButton(
 
     if (!orderId) {
       await finishUrlFlow();
-      throw new Error("PayPal order ID missing during capture");
+      notifyPaymentCancelled("PayPal payment complete nahi hua.");
+      return true;
     }
 
     try {
@@ -412,11 +439,13 @@ const PayPalCheckoutButton = forwardRef(function PayPalCheckoutButton(
       const returnUrl =
         Platform.OS === "web"
           ? getBrowserRedirectUrl("success")
-          : "evdivineapp://paypal-success";
+          : getMobileRedirectUrl();
       const cancelUrl =
         Platform.OS === "web"
           ? getBrowserRedirectUrl("cancelled")
-          : "evdivineapp://paypal-cancel";
+          : getMobileRedirectUrl();
+      const redirectUrl =
+        Platform.OS === "web" ? window.location.href : getMobileRedirectUrl();
 
       const createResponse = createOrderRequest
         ? await createOrderRequest({
@@ -449,11 +478,15 @@ const PayPalCheckoutButton = forwardRef(function PayPalCheckoutButton(
 
       await storePendingOrder(orderId);
 
-      await openPayPalCheckout(approvalUrl);
+      await openPayPalCheckout(approvalUrl, redirectUrl);
     } catch (error) {
       await clearPendingOrder();
       handlingReturnRef.current = false;
       setLoading(false);
+
+      if (isPaymentCancelledError(error)) {
+        return;
+      }
 
       console.error(
         "PayPal frontend error:",

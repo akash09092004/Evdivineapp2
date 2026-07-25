@@ -33,6 +33,12 @@ const getUserWallet = async (ownerId, session = null) => {
   return wallet;
 };
 
+const getWalletBalanceValue = (owner, wallet) =>
+  Math.max(
+    toNumber(owner?.walletBalance),
+    toNumber(wallet?.availableBalance || wallet?.balance)
+  );
+
 const syncWalletBalances = async ({
   ownerId,
   nextBalance,
@@ -82,23 +88,18 @@ const creditWallet = async ({
 
   const creditAmount = toNumber(amount);
   const owner = await User.findById(ownerId).session(session || null);
-  if (!owner) {
-    throw new AppError("Wallet owner not found", 404, "WALLET_OWNER_NOT_FOUND");
-  }
-
   const wallet = await getUserWallet(ownerId, session);
-  const currentBalance = Math.max(
-    toNumber(owner.walletBalance),
-    toNumber(wallet.availableBalance || wallet.balance)
-  );
+  const currentBalance = getWalletBalanceValue(owner, wallet);
   const nextBalance = currentBalance + creditAmount;
 
-  owner.walletBalance = nextBalance;
+  if (owner) {
+    owner.walletBalance = nextBalance;
+    await owner.save({ session });
+  }
+
   wallet.balance = nextBalance;
   wallet.availableBalance = nextBalance;
   wallet.totalCredited = toNumber(wallet.totalCredited) + creditAmount;
-
-  await owner.save({ session });
   await wallet.save({ session });
 
   await WalletTransaction.create(
@@ -117,7 +118,7 @@ const creditWallet = async ({
     { session }
   );
 
-  return owner;
+  return owner || wallet;
 };
 
 const debitWallet = async ({
